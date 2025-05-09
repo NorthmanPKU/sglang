@@ -188,10 +188,24 @@ class ModelRunner:
             server_args.max_running_requests,
             server_args.max_total_tokens,
         )
+        # 有了min_per_gpu_memory，就可以初始化memory pool了
+        # max_running_requests是最多可用跑多少请求，max_total_tokens是可以存多少token
+        # 注意，这里最终传递给token_to_kv_pool的tokens_num 是min(max_total_tokens, profile_num_tokens(min_per_gpu_memory)
+        # 所以其实是取用户配置和系统状态中的小值
+        # 分别是req_to_token_pool 和 token_to_kv_pool的数组的一维维度
+        # 这里也有几个关键步骤：
+        # 1. 确实kv cache 存储的数据类型，这个配置参数会传进来
+        # 2. 初始化req_to_token_pool， 维度为（max_num_reqs + 1，self.model_config.context_len + 4）
+        #         不过这里+1，+4 都是为啥，没看明白
+        # 3. 根据model config 里的attention，架构，选择对应的token_to_kv_pool，比如MLA，MHA，doubleSparsity等
+        #          维度是(self.max_total_num_tokens, (head_num, head_dim, layer_num))
+
         if self.device == "cuda":
             self.init_cublas()
             self.init_attention_backend()
             self.init_cuda_graphs()
+            # 这部分，则是对attentionBackend的初始化，主要包括：
+            # cublas的初始化（用一个小matmul 做系统预热），初始化attentionbackend和cudagraph
         else:
             self.cuda_graph_runner = None
             self.init_attention_backend()
@@ -250,6 +264,13 @@ class ModelRunner:
                 server_args.disable_radix_cache = True
 
     def init_torch_distributed(self):
+        # 这里的关键有几点：
+        # 1. 初始化分布式backend，如果是cuda，则会用nccl的后端，
+        #。   这里的关键函数是init_distributed_environment，从vllm import过来的，这部分分布式以后单独出个章节写
+        # 2. 获得当前系统中可用的显存（对齐到多个rank上的最小值）
+        #     这里的关键函数是get_available_gpu_memory，先拿local的free memory，再通过torch.distributed.ReduceOp.MIN
+        #     获得多个rank中的最小值，作为整个分布式系统的采用值，有趣的是，sglang 还拿最终值和本地值做了一次比较
+        #     如果min_per_gpu_memory < local_gpu_memory * 0.9, 则会系统层面抛错
         logger.info("Init torch distributed begin.")
 
         torch.get_device_module(self.device).set_device(self.gpu_id)
@@ -632,6 +653,17 @@ class ModelRunner:
         max_num_reqs: Optional[int] = None,
         max_total_tokens: Optional[int] = None,
     ):
+        # 有了min_per_gpu_memory，就可以初始化memory pool了
+        # max_running_requests是最多可用跑多少请求，max_total_tokens是可以存多少token
+        # 注意，这里最终传递给token_to_kv_pool的tokens_num 是min(max_total_tokens, profile_num_tokens(min_per_gpu_memory)
+        # 所以其实是取用户配置和系统状态中的小值
+        # 分别是req_to_token_pool 和 token_to_kv_pool的数组的一维维度
+        # 这里也有几个关键步骤：
+        # 1. 确实kv cache 存储的数据类型，这个配置参数会传进来
+        # 2. 初始化req_to_token_pool， 维度为（max_num_reqs + 1，self.model_config.context_len + 4）
+        #         不过这里+1，+4 都是为啥，没看明白
+        # 3. 根据model config 里的attention，架构，选择对应的token_to_kv_pool，比如MLA，MHA，doubleSparsity等
+        #          维度是(self.max_total_num_tokens, (head_num, head_dim, layer_num))
         if self.server_args.kv_cache_dtype == "auto":
             self.kv_cache_dtype = self.dtype
         elif self.server_args.kv_cache_dtype == "fp8_e5m2":
@@ -763,6 +795,8 @@ class ModelRunner:
 
     def init_cublas(self):
         """We need to run a small matmul to init cublas. Otherwise, it will raise some errors later."""
+        # 这部分，则是对cublas的初始化，主要包括：
+        # 用一个小matmul 做系统预热
         dtype = torch.float16
         device = "cuda"
         a = torch.ones((16, 16), dtype=dtype, device=device)
@@ -865,6 +899,10 @@ class ModelRunner:
         device_mesh = torch.distributed.init_device_mesh(self.device, (self.tp_size,))
         tensor_parallel(self.model, device_mesh)
 
+    # 这两个接口函数语义比较明确，为forward 在attentionBackend 准备控制信息，并进行实际的forward
+    # 从这里开始，forward的栈如下，大家可以直接看gpt2 model的实现，比较干净和方便分析。
+    # 在Model，layer和attentionBackend 会涉及set_kv_buffer的操作
+    # ModelRunner->Model->layer->attentionBackend
     def forward_decode(self, forward_batch: ForwardBatch):
         self.attn_backend.init_forward_metadata(forward_batch)
         return self.model.forward(
@@ -906,6 +944,7 @@ class ModelRunner:
     def forward(
         self, forward_batch: ForwardBatch, skip_attn_backend_init: bool = False
     ) -> LogitsProcessorOutput:
+        # 可以见到如果forwardbatch 支持cudagraph，则会优先以cudagraph 方式执行，否则根据各自的forward mode进行推理
         if (
             forward_batch.forward_mode.is_cuda_graph()
             and self.cuda_graph_runner

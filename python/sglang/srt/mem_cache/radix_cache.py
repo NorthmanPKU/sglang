@@ -91,6 +91,7 @@ class RadixCache(BasePrefixCache):
     ##### Public API #####
 
     def reset(self):
+        # 和chunk cache的区别主要就是多了radixtree相关的结构
         self.root_node = TreeNode()
         self.root_node.key = []
         self.root_node.value = []
@@ -129,6 +130,23 @@ class RadixCache(BasePrefixCache):
 
     def cache_finished_req(self, req: Req, token_ids: Optional[List[int]] = None):
         """Cache request when it finishes."""
+        """
+        缓存已完成的请求。
+
+        该函数用于在请求完成时将其缓存。根据是否禁用缓存，函数会执行不同的操作。
+        如果缓存被禁用，函数会释放与请求相关的内存资源。
+        如果缓存启用，函数会将请求的token ID插入到Radix Cache中，并管理内存池的引用计数。
+
+        参数:
+            req (Req): 已完成的请求对象，包含请求的相关信息。
+            token_ids (Optional[List[int]]): 可选的token ID列表。如果未提供，将使用请求的原始输入ID和输出ID。
+
+        功能:
+            - 释放与请求相关的内存资源（如果缓存被禁用）。
+            - 将请求的token ID插入到Radix Cache中。
+            - 更新内存池的引用计数。
+            - 释放请求槽以解除缓存锁定。
+        """
         if self.disable:
             if token_ids is None:
                 token_ids_len = len(req.origin_input_ids) + len(req.output_ids) - 1
@@ -196,7 +214,11 @@ class RadixCache(BasePrefixCache):
     def total_size(self):
         return self._total_size_helper()
 
-    def evict(self, num_tokens: int, evict_callback: Callable):
+    def evict(self, num_tokens: int, evict_callback: Callable): # radix 独有实现的接口
+        # 这是一个清资源的接口，这个的意思是，从cache 中清掉num_tokens个数的entry，并且调用evict_callback清空资源
+        # 注意，这个函数有两个退出条件：1. 清理出来了num_tokens的显存；2. 已经没有可清理的token
+        # 注意，对于正在使用的显存，不会清理（通过ref）判断
+
         if self.disable:
             return
 

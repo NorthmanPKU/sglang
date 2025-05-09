@@ -54,7 +54,7 @@ IN_BATCH_PREFIX_CACHING_DEPRIORITIZE_THRESHOLD = int(
     os.environ.get("IN_BATCH_PREFIX_CACHING_DEPRIORITIZE_THRESHOLD", "32")
 )
 
-
+# 主要用于给waiting queue排序，waiting queue就是待处理的请求队列
 class CacheAwarePolicy(Enum):
     """Scheduling policies that are aware of the tree cache."""
 
@@ -70,7 +70,7 @@ class CacheAgnosticPolicy(Enum):
     RANDOM = "random"
 
 
-class SchedulePolicy:
+class SchedulePolicy: # 默认使用了RadixCache作为waiting_queue_radix_tree用于任务调度
     Policy = Union[CacheAwarePolicy, CacheAgnosticPolicy]
 
     def __init__(self, policy: str, tree_cache: BasePrefixCache):
@@ -82,6 +82,7 @@ class SchedulePolicy:
             req_to_token_pool=None, token_to_kv_pool_allocator=None, disable=False
         )
 
+    # 计算优先级，最重要的接口函数
     def calc_priority(self, waiting_queue: List[Req]) -> bool:
         policy = self._determine_active_policy(waiting_queue)
 
@@ -111,6 +112,7 @@ class SchedulePolicy:
 
         return prefix_computed
 
+    # _determine_active_policy 中如果发现等待队列太长且默认采用的是LPM（最长前缀匹配），则换成FCFS
     def _determine_active_policy(self, waiting_queue: List[Req]) -> Policy:
         if len(waiting_queue) > 128 and self.policy == CacheAwarePolicy.LPM:
             # Turn off the expensive prefix matching and sorting when the #queue is large.
@@ -250,7 +252,7 @@ class AddReqResult(Enum):
     NO_TOKEN = auto()  # No token left
     OTHER = auto()  # Other reasons to stop adding requests
 
-
+# 决定了还能不能插入新请求
 class PrefillAdder:
     def __init__(
         self,
@@ -266,8 +268,8 @@ class PrefillAdder:
         self.token_to_kv_pool_allocator = token_to_kv_pool_allocator
         self.running_batch = running_batch
         self.new_token_ratio = new_token_ratio
-        self.rem_input_tokens = rem_input_tokens - mixed_with_decode_tokens
-        self.rem_chunk_tokens = rem_chunk_tokens
+        self.rem_input_tokens = rem_input_tokens - mixed_with_decode_tokens # 只包括prefill 的输入
+        self.rem_chunk_tokens = rem_chunk_tokens # 一个chunk可以包含的token数
         if self.rem_chunk_tokens is not None:
             self.rem_chunk_tokens -= mixed_with_decode_tokens
 
@@ -293,7 +295,7 @@ class PrefillAdder:
             )
 
     @property
-    def rem_total_tokens(self):
+    def rem_total_tokens(self): # 包括prefill和decoding 一共的上下文长度
         return (
             self.token_to_kv_pool_allocator.available_size()
             + self.tree_cache.evictable_size()
@@ -322,6 +324,23 @@ class PrefillAdder:
     def _prefill_one_req(
         self, prefix_len: int, extend_input_len: int, max_new_tokens: int
     ):
+        """
+        更新批次的资源使用情况和日志记录。
+
+        该函数在添加请求到批次时被调用，用于更新当前批次的资源消耗状态，
+        并记录处理的token数。它确保批次处理不会超出可用资源，并为后续分析
+        和调试提供数据支持。
+
+        参数:
+            prefix_len (int): 前缀长度，表示已缓存的token数。
+            extend_input_len (int): 扩展输入长度，表示新输入的token数。
+            max_new_tokens (int): 最大新生成token数，表示请求可能生成的token数。
+
+        作用:
+            - 更新总token偏移量和当前token偏移量。
+            - 减少剩余输入token数和分块token数（如果启用）。
+            - 记录命中token数和输入token数。
+        """
         self.rem_total_token_offset += extend_input_len + max_new_tokens
         self.cur_rem_token_offset += extend_input_len
         self.rem_input_tokens -= extend_input_len
@@ -332,6 +351,25 @@ class PrefillAdder:
         self.log_input_tokens += extend_input_len
 
     def add_chunked_req(self, req: Req):
+        """
+        处理分块请求，将其添加到可运行列表中，并根据资源限制截断请求。
+
+        该函数用于处理长序列请求，通过分块策略将请求分成可管理的部分。
+        它根据剩余资源截断请求，并更新批次的资源使用情况。对于被截断的
+        请求，函数返回请求对象以便后续继续处理。
+
+        参数:
+            req (Req): 请求对象，包含输入序列和采样参数。
+
+        返回:
+            Req: 如果请求被截断，返回请求对象；否则返回None表示请求已完整处理。
+
+        作用:
+            - 根据剩余分块token数截断请求。
+            - 更新请求的扩展输入长度和填充ID数组。
+            - 将请求添加到可运行列表。
+            - 调用`_prefill_one_req`更新资源使用情况。
+        """
         truncated = req.extend_input_len > self.rem_chunk_tokens
         req.extend_input_len = min(req.extend_input_len, self.rem_chunk_tokens)
         req.fill_ids = req.fill_ids[: len(req.prefix_indices) + req.extend_input_len]
@@ -429,21 +467,51 @@ class PrefillAdder:
         return self.budget_state()
 
     def add_one_req(self, req: Req, has_chunked_req: bool):
+        """
+        尝试将单个请求添加到当前批次中，根据资源限制和分块策略决定如何处理。
+        
+        该函数检查请求所需的资源是否可以满足，并决定是完整处理请求、进行分块处理，
+        还是需要延迟处理。对于需要分块处理的长序列请求，会截断输入并标记为分块请求，
+        以便后续继续处理剩余部分。
+        
+        参数:
+            req (Req): 待添加的请求对象，包含输入序列和采样参数。
+            has_chunked_req (bool): 当前批次中是否已经存在分块请求，影响资源分配决策。
+        
+        返回:
+            AddReqResult: 添加结果枚举值，可能为以下之一:
+                - CONTINUE: 可以继续添加更多请求
+                - NO_TOKEN: 没有足够的token资源
+                - OTHER: 其他原因导致无法添加
+        
+        注意:
+            1. 对于设置了ignore_eos且不使用树缓存的请求，使用特殊处理路径。
+            2. 函数会锁定请求的last_node以确保并发安全。
+            3. 当资源不足以完整处理但可以分块处理时，会截断输入并创建分块请求。
+            4. 分块处理会更新req的extend_input_len和fill_ids，仅处理一部分输入。
+        """
+        # 特殊情况：如果请求设置了忽略EOS标记且树缓存禁用，使用专门的处理函数
         if req.sampling_params.ignore_eos and self.tree_cache.disable:
             return self.add_one_req_ignore_eos(req, has_chunked_req)
 
+        # 计算请求的总token数（输入长度+估计的生成长度）
+        # CLIP_MAX_NEW_TOKENS_ESTIMATION是一个常量，用于限制估计的生成长度上限
         total_tokens = req.extend_input_len + min(
             req.sampling_params.max_new_tokens, CLIP_MAX_NEW_TOKENS_ESTIMATION
         )
         input_tokens = req.extend_input_len
+        # 获取前缀长度（已缓存部分的长度）
         prefix_len = len(req.prefix_indices)
 
+        # 如果请求所需的token数超过了当前可用的token总数，返回NO_TOKEN
         if total_tokens >= self.rem_total_tokens:
             return AddReqResult.NO_TOKEN
 
+        # 如果请求的输入token数超过了当前可用的输入token总数，并且can_run_list不为空，返回OTHER
         if input_tokens > self.rem_input_tokens and len(self.can_run_list) != 0:
             return AddReqResult.OTHER
 
+        # 使用上下文管理器锁定请求的last_node，确保并发安全
         with self._lock_node(req.last_node):
             if total_tokens > self.rem_total_tokens:
                 return AddReqResult.NO_TOKEN

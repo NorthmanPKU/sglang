@@ -49,11 +49,12 @@ if TYPE_CHECKING:
     from sglang.srt.speculative.eagle_utils import EagleDraftInput, EagleVerifyInput
     from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 
-
+# 主要是说明了sglang 支持的各种inference 模式，包括如下8种
 class ForwardMode(IntEnum):
     # Prefill a new sequence. This is deprecated now. "EXTEND" covers this case.
     PREFILL = auto()
     # Extend a sequence. The KV cache of the beginning part of the sequence is already computed (e.g., system prompt).
+    # 即带cache的prefill，场景上覆盖了PREFILL
     EXTEND = auto()
     # Decode one token.
     DECODE = auto()
@@ -69,6 +70,7 @@ class ForwardMode(IntEnum):
 
     # A dummy first batch to start the pipeline for overlap scheduler.
     # It is now used for triggering the sampling_info_done event for the first prefill batch.
+    # 这是一个特殊的模式，用于初始化scheduler的各种配置和相关预热 ，是第一个batch的forward 模式
     DUMMY_FIRST = auto()
 
     def is_prefill(self):
@@ -154,6 +156,7 @@ class ForwardBatch:
     token_ids_logprobs: Optional[List[List[int]]] = None
 
     # Position information
+    # positions和mrope_positions位置编码参数，是forwardBatch 构造过程才被赋予的，后者是qwen vl 才需要。
     positions: torch.Tensor = None
 
     # For decode
@@ -203,6 +206,7 @@ class ForwardBatch:
     # this will be recomputed in LogitsMetadata.from_forward_batch
     dp_local_start_pos: Optional[torch.Tensor] = None  # cached info at runtime
     dp_local_num_tokens: Optional[torch.Tensor] = None  # cached info at runtime
+    # gathered_buffer 是为了gather 所有tp上的数据申请的buffer，dp 才会使用，我们也先按下不表
     gathered_buffer: Optional[torch.Tensor] = None
     can_run_dp_cuda_graph: bool = False
 
@@ -215,8 +219,10 @@ class ForwardBatch:
     padded_static_len: int = -1  # -1 if not padded
 
     # For Qwen2-VL
+    # positions和mrope_positions位置编码参数，是forwardBatch 构造过程才被赋予的，后者是qwen vl 才需要。
     mrope_positions: torch.Tensor = None
 
+    # 用于基于WorkerModelBatch 获得一个forwardBatch
     @classmethod
     def init_new(
         cls,

@@ -84,7 +84,7 @@ class BaseFinishReason:
     def to_json(self):
         raise NotImplementedError()
 
-
+# 匹配了终止的token，比如tokenizer，sampler，scheduler 等设置的eos token
 class FINISH_MATCHED_TOKEN(BaseFinishReason):
     def __init__(self, matched: Union[int, List[int]]):
         super().__init__()
@@ -96,7 +96,7 @@ class FINISH_MATCHED_TOKEN(BaseFinishReason):
             "matched": self.matched,
         }
 
-
+# 匹配了终止的字符串，一般是sampler设置的
 class FINISH_MATCHED_STR(BaseFinishReason):
     def __init__(self, matched: str):
         super().__init__()
@@ -108,7 +108,7 @@ class FINISH_MATCHED_STR(BaseFinishReason):
             "matched": self.matched,
         }
 
-
+# 匹配了最大输出长度
 class FINISH_LENGTH(BaseFinishReason):
     def __init__(self, length: int):
         super().__init__()
@@ -120,7 +120,7 @@ class FINISH_LENGTH(BaseFinishReason):
             "length": self.length,
         }
 
-
+# 由于其他原因终止，比如请求不合法等等
 class FINISH_ABORT(BaseFinishReason):
     def __init__(self, message="Unknown error", status_code=None, err_type=None):
         super().__init__(is_error=True)
@@ -245,20 +245,22 @@ class Req:
         eos_token_ids: Optional[Set[int]] = None,
     ):
         # Input and output info
-        self.rid = rid
-        self.origin_input_text = origin_input_text
-        self.origin_input_ids_unpadded = (
+        self.rid = rid                                               #请求id, chunkedCache entry的key
+        self.origin_input_text = origin_input_text                   #原始请求输入文本字符串
+        self.origin_input_ids_unpadded = (                           #原始请求输入token list
             origin_input_ids_unpadded
             if origin_input_ids_unpadded
             else origin_input_ids  # Before image padding
         )
-        self.origin_input_ids = origin_input_ids
+        self.origin_input_ids = origin_input_ids                     #也是原始请求输入，但可能是padding过后的。
+                                                                     #通常和origin_input_ids_unpadded一样
+                                                                     #在image input下，sglang对输入做额外的padding，则有区别
         # Each decode stage's output ids
-        self.output_ids = []
+        self.output_ids = []                                         #输出token list
         # fill_ids = origin_input_ids + output_ids. Updated if chunked.
         self.fill_ids = None
-        self.session_id = session_id
-        self.input_embeds = input_embeds
+        self.session_id = session_id    # 会话id，一轮用户会话可能有多个请求
+        self.input_embeds = input_embeds    # embedding 化后的输入
 
         # Sampling info
         if isinstance(sampling_params.custom_params, dict):
@@ -272,18 +274,18 @@ class Req:
         self.return_hidden_states = return_hidden_states
 
         # Memory pool info
-        self.req_pool_idx: Optional[int] = None
+        self.req_pool_idx: Optional[int] = None                      #在req_to_token_pool中的索引
 
         # Check finish
-        self.tokenizer = None
-        self.finished_reason = None
+        self.tokenizer = None                           # tokenizer，可以用于eos等stop token判断
+        self.finished_reason = None                     # 结束理由
         # If we want to abort the request in the middle of the event loop, set this to true
         # Note: We should never set finished_reason in the middle, the req will get filtered and never respond
-        self.to_abort = False
+        self.to_abort = False                           # 是否是finished_abort
         # This carries the error message for `.to_abort` and will be attached to the finished_reason at the end of the event loop
         self.to_abort_message: str = "Unknown error"
-        self.stream = stream
-        self.eos_token_ids = eos_token_ids
+        self.stream = stream                            # 是否是流式的请求
+        self.eos_token_ids = eos_token_ids              # eos token list，用于结束判断
 
         # For incremental decoding
         # ----- | --------- read_ids -------|
@@ -296,7 +298,8 @@ class Req:
         # 3: last token
         self.surr_offset = None  # Surrounding offset to defeat the cleanup algorithm
         self.read_offset = None
-        self.decoded_text = ""
+        # surr_offset通常记录上一次处理到的位置，read_offset 说明正在处理的位置
+        self.decoded_text = ""   # 解码的输出
 
         # For multimodal inputs
         self.image_inputs: Optional[ImageInputs] = None
@@ -307,7 +310,7 @@ class Req:
         # Number of tokens to run prefill.
         self.extend_input_len = 0
         # The relative logprob_start_len in an extend batch
-        self.extend_logprob_start_len = 0
+        self.extend_logprob_start_len = 0 #extend_即extend的部分开始算，简单理解extend_logprob_start_len = extend_logprob_start_lens - prefix_len
         self.last_node = None
 
         # Whether or not if it is chunked. It increments whenever
@@ -315,17 +318,20 @@ class Req:
         # processed.
         self.is_chunked = 0
 
-        # For retraction
+        # For retraction  # 用于撤回类似的功能，即需要回退decode 的输出
         self.is_retracted = False
 
         # Logprobs (arguments)
-        self.return_logprob = return_logprob
+        self.return_logprob = return_logprob # 是否有必要返回logits
         # Start index to compute logprob from.
-        self.logprob_start_len = 0
-        self.top_logprobs_num = top_logprobs_num
+        self.logprob_start_len = 0 # 从哪个位置开始计算logits
+        self.top_logprobs_num = top_logprobs_num # top即按照val 的top分布
         self.token_ids_logprob = token_ids_logprob
 
         # Logprobs (return values)
+        # _idx 的list，即token 本身（idx 指词表里的index）
+        # _val 的list，即log值，即分布概率
+        # _output 和 _input 即输入输出
         self.input_token_logprobs_val: Optional[List[float]] = None
         self.input_token_logprobs_idx: Optional[List[int]] = None
         self.input_top_logprobs_val: Optional[List[float]] = None
@@ -357,7 +363,7 @@ class Req:
         # Embedding (return values)
         self.embedding = None
 
-        # Constrained decoding
+        # Constrained decoding， 一般用于类似json的结构化输出
         self.grammar: Optional[BaseGrammarObject] = None
 
         # The number of cached tokens that were already cached in the KV cache
@@ -378,11 +384,12 @@ class Req:
             self.image_inputs = image_inputs
         else:
             self.image_inputs.merge(image_inputs)
-
+    # 用于判断是否可以结束，以及finished_reason 是哪种情况
     def finished(self) -> bool:
         # Whether request reached finished condition
         return self.finished_reason is not None
-
+    
+    #初始化本请求下一轮inference 需要的参数，比如计算需要用多长的kvcache（主要是计算fill_ids和extend_input_len）
     def init_next_round_input(self, tree_cache: Optional[BasePrefixCache] = None):
         self.fill_ids = self.origin_input_ids + self.output_ids
         if tree_cache is not None:
@@ -411,6 +418,10 @@ class Req:
         return self.fill_ids[:max_prefix_len]
 
     # Based on https://github.com/vllm-project/vllm/blob/7a64d24aad69e4d2548aa0bf528d9fe63428ab01/vllm/transformers_utils/detokenizer.py#L194-L313
+    # 这两个函数通常是用于获取下一轮detokenizer 相关的参数并进行相关配置
+    # 逻辑上，detokenizer 自己会管理相关配置，req的这两个接口主要是for jump forward decoding，
+    # 由于jump forward的解码过程存在一些跳跃，所以需要请求级别自己去配置
+    # 同理上面也只有jump forward 需要单独提供detokinizer的vid，其他detokenize manager 自己就可以管理（似乎已经没有vid了？）
     def init_incremental_detokenize(self):
         first_iter = self.surr_offset is None or self.read_offset is None
 
@@ -492,6 +503,7 @@ class Req:
                     self.finished_reason = FINISH_MATCHED_STR(matched=stop_str)
                     return
 
+    # 为了撤回decode，重置decode 参数
     def reset_for_retract(self):
         self.prefix_indices = []
         self.last_node = None
@@ -519,33 +531,38 @@ class ScheduleBatch:
     """Store all information of a batch on the scheduler."""
 
     # Request, memory pool, and cache
-    reqs: List[Req]
-    req_to_token_pool: ReqToTokenPool = None
+    reqs: List[Req] # batch 内包含的req list
+    req_to_token_pool: ReqToTokenPool = None # 使用的req_to_token_pool
     token_to_kv_pool_allocator: TokenToKVPoolAllocator = None
-    tree_cache: BasePrefixCache = None
+    tree_cache: BasePrefixCache = None # 使用的tree_cache
 
     # Batch configs
     model_config: ModelConfig = None
     forward_mode: ForwardMode = None
-    enable_overlap: bool = False
+    enable_overlap: bool = False #允许overlap，减少overhead，提高性能
 
-    # Sampling info
+    # Sampling info 提供next_batch的采样信息是为了更多信息进行性能优化
     sampling_info: SamplingBatchInfo = None
     next_batch_sampling_info: SamplingBatchInfo = None
 
     # Batched arguments to model runner
+    #req 里各项的list, like: batch.input_ids = [req0.input_ids, req1.input_ids... ]
     input_ids: torch.Tensor = None  # shape: [b], int32
     input_embeds: torch.Tensor = None  # shape: [b, hidden_size], float32
     req_pool_indices: torch.Tensor = None  # shape: [b], int32
     seq_lens: torch.Tensor = None  # shape: [b], int64
     # The output locations of the KV cache
+    # req_pool_indice是req_to_token_pool里的索引，out_cache_loc 是token_to_kv_pool里的索引
     out_cache_loc: torch.Tensor = None  # shape: [b], int32
     output_ids: torch.Tensor = None  # shape: [b], int32
 
     # The sum of all sequence lengths
+    # seq_lens 是一个list（或者tensor），每个请求的seq_len是内部一项
+    # seq_lens_sum 是seq_lens的总和，即sum(seq_lens), 对于prefill是个重要的负载参考
     seq_lens_sum: int = None
 
     # For DP attention
+    # global_num_tokens 是系统内所有的token和，简单理解就是假如我们有4个dp worker，每个dp worker有一个seq_lens_sum，global_num_tokens即4个dp worker的seq_lens_sum之和
     global_num_tokens: Optional[List[int]] = None
     global_num_tokens_for_logprob: Optional[List[int]] = None
     can_run_dp_cuda_graph: bool = False
@@ -555,11 +572,12 @@ class ScheduleBatch:
     top_logprobs_nums: Optional[List[int]] = None
     token_ids_logprobs: Optional[List[List[int]]] = None
 
-    # For extend and mixed chunekd prefill
+    # For extend and mixed chunked prefill
     prefix_lens: List[int] = None
     extend_lens: List[int] = None
+    # extend_num_tokens 即一个batch内用于extend计算的token数量
     extend_num_tokens: int = None
-    decoding_reqs: List[Req] = None
+    decoding_reqs: List[Req] = None # 仅包含需要decoding的req list（区别于prefill，extend）
     extend_logprob_start_lens: List[int] = None
     # It comes empty list if logprob is not required.
     extend_input_logprob_token_ids: Optional[torch.Tensor] = None
@@ -623,6 +641,7 @@ class ScheduleBatch:
     def is_empty(self):
         return len(self.reqs) == 0
 
+    # alloc_req_slots，为reqs里每个req分配req_to_token_pool 里的一个独立的索引/slot
     def alloc_req_slots(self, num_reqs: int):
         req_pool_indices = self.req_to_token_pool.alloc(num_reqs)
         if req_pool_indices is None:
@@ -634,6 +653,7 @@ class ScheduleBatch:
             )
         return req_pool_indices
 
+    # alloc_token_slots，为每个token 分配token_to_kv_pool 里的一个独立的索引
     def alloc_token_slots(self, num_tokens: int):
         out_cache_loc = self.token_to_kv_pool_allocator.alloc(num_tokens)
 
@@ -726,6 +746,7 @@ class ScheduleBatch:
 
         assert len(self.out_cache_loc) == self.extend_num_tokens
 
+    # 会多调用alloc_req_slots 分配请求空间（就是一条record）
     def prepare_for_extend(self):
         self.forward_mode = ForwardMode.EXTEND
 
@@ -913,13 +934,15 @@ class ScheduleBatch:
         # TODO (lianmin): Revisit this. It should be seq_len - 1
         self.extend_logprob_start_lens.extend([0] * running_bs)
 
+    # check_decode_mem，看看有没有out of mem（看看token_to_kv_pool 有没有空slot）
     def check_decode_mem(self, buf_multiplier=1):
         bs = len(self.reqs) * buf_multiplier
+        # 如果当前剩余显存，够当前bs 推理，则返回true
         if self.token_to_kv_pool_allocator.available_size() >= bs:
             return True
-
+        # 从当前的tree_cache 中，尝试清理足够的显存出来，具体清理逻辑看上述evict的说明
         self.tree_cache.evict(bs, self.token_to_kv_pool_allocator.free)
-
+        # 如果清理后，有足够显存，则返回true，其他返回flase
         if self.token_to_kv_pool_allocator.available_size() >= bs:
             return True
 
@@ -1039,6 +1062,7 @@ class ScheduleBatch:
             self.model_config.vocab_size,
         )
 
+    # 会调用alloc_token_slots为token 分配显存空间
     def prepare_for_decode(self):
         self.forward_mode = ForwardMode.DECODE
         if self.spec_algorithm.is_eagle():
@@ -1096,6 +1120,8 @@ class ScheduleBatch:
             self.seq_lens.add_(1)
         self.seq_lens_sum += bs
 
+    #该函数用于获得过滤后的batch，过滤条件是req的req_pool_indice在keep_indices内。
+    #或者keep_indices为None下，过滤条件是reqs中不为being_chunked_req的请求而且请求没有结束
     def filter_batch(
         self,
         chunked_req_to_exclude: Optional[Req] = None,
@@ -1147,6 +1173,8 @@ class ScheduleBatch:
         if self.spec_info:
             self.spec_info.filter_batch(keep_indices_device)
 
+    #将others里的batch 合并到本batch中，这里有一个值得注意的是，为了保障安全
+    #我们需要将sampling 先进行合并，因为sampling内惩罚的合并是依赖合并前的batch 请求的
     def merge_batch(self, other: "ScheduleBatch"):
         # Penalizer orchestrator must be merged before Batch.reqs is merged. This is because
         # orchestrator.merge() depends on Batch.reqs during preparation of each penalizers, so it
@@ -1185,6 +1213,9 @@ class ScheduleBatch:
         if self.spec_info:
             self.spec_info.merge_batch(other.spec_info)
 
+    # 用于将一个schedulebatch 转变成tp worker可以处理的ModelWorkerBatch，参数和schedulebatch几乎没有差别
+    # 但ModelWorkerBatch有一个用triton的write_req_to_token_pool_triton，成员函数
+    # 大家可以看看triton api怎么操作python指针，比如req_to_token_pool的指针并进行数据修改
     def get_model_worker_batch(self) -> ModelWorkerBatch:
         if self.forward_mode.is_decode_or_idle():
             if global_server_args_dict["enable_flashinfer_mla"]:

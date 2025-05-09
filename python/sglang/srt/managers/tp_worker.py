@@ -162,13 +162,16 @@ class TpModelWorker:
             self.model_runner.token_to_kv_pool_allocator,
         )
 
+    # 真正forward 函数，包括forward和sample 过程，这里的launch_done目前没有地方调用，忽略即可
     def forward_batch_generation(
         self,
         model_worker_batch: ModelWorkerBatch,
         launch_done: Optional[threading.Event] = None,
         skip_sample: bool = False,
     ) -> Tuple[LogitsProcessorOutput, Optional[torch.Tensor]]:
+        #构建一个forwardBatch，forwardBatch里已经有了完整的需要的batch信息（包括位置编码信息）
         forward_batch = ForwardBatch.init_new(model_worker_batch, self.model_runner)
+        # forward 推理，获得logits
         logits_output = self.model_runner.forward(forward_batch)
         if launch_done:
             launch_done.set()
@@ -176,6 +179,7 @@ class TpModelWorker:
         if skip_sample:
             next_token_ids = None
         else:
+             # 采样，从logits->tokens，从概率分布中选择一个或多个样本
             next_token_ids = self.model_runner.sample(logits_output, model_worker_batch)
 
         return logits_output, next_token_ids

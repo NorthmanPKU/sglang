@@ -32,7 +32,7 @@ class AttentionArch(IntEnum):
     MLA = auto()
     MHA = auto()
 
-
+# 有关inference的配置
 class ModelConfig:
     def __init__(
         self,
@@ -46,11 +46,11 @@ class ModelConfig:
         quantization: Optional[str] = None,
         override_config_file: Optional[str] = None,
     ) -> None:
-        self.model_path = model_path
-        self.revision = revision
-        self.quantization = quantization
+        self.model_path = model_path #模型路径
+        self.revision = revision     # 版本，主要是拿开源配置用
+        self.quantization = quantization #量化
 
-        # Parse args
+        # Parse args， huggingface 开源配置，还允许override 配置
         self.model_override_args = json.loads(model_override_args)
         kwargs = {}
         if override_config_file and override_config_file.strip():
@@ -76,6 +76,9 @@ class ModelConfig:
         self.is_encoder_decoder = is_encoder_decoder_model(self.hf_config.architectures)
         self.dtype = _get_and_verify_dtype(self.hf_text_config, dtype)
 
+        # 模型的配置信息，比如是MHA还是MLA，支持最大上下文长度，各自dim，lora/rope
+        # 逻辑上有了下面这堆参数，我们可以计算出kvcache需要多少
+        
         # Derive context length
         derived_context_len = get_context_length(self.hf_text_config)
         if context_length is not None:

@@ -60,13 +60,16 @@ class ReqToTokenPool:
         self.size = size
         self.max_context_len = max_context_len
         self.device = device
-        with memory_saver_adapter.region():
+        with memory_saver_adapter.region(): 
             self.req_to_token = torch.zeros(
                 (size, max_context_len), dtype=torch.int32, device=device
-            )
+            ) 
+            # 一个两维数组，size指请求容量，max_context_len指一个请求的最大token数量
+            # 功能：通过free_slots对请求所需资源进行分配和释放，通过req_to_token 进行对req-token映射的记录。
         self.free_slots = list(range(size))
 
     def write(self, indices, values):
+        # 对映射内容的修改，通过write接口实现，该接口被schedule上层调用
         self.req_to_token[indices] = values
 
     def available_size(self):
@@ -194,6 +197,7 @@ class MHATokenToKVPool(KVCache):
         self.device = device
         if dtype in (torch.float8_e5m2, torch.float8_e4m3fn):
             # NOTE: Store as torch.uint8 because Tensor.index_put is not implemented for torch.float8_e5m2
+            # 存储类型不支持float8_e5m2，会转成uint8.
             self.store_dtype = torch.uint8
         else:
             self.store_dtype = dtype
@@ -215,6 +219,7 @@ class MHATokenToKVPool(KVCache):
         with self.memory_saver_adapter.region():
             # [size, head_num, head_dim] for each layer
             # The padded slot 0 is used for writing dummy outputs from padded tokens.
+            # 不同的算法，kvcache的管理可能不同，比如MHA和MLA是不同的。但一维都是layer，是统一的如下的格式
             self.k_buffer = [
                 torch.empty(
                     (self.size + 1, self.head_num, self.head_dim),
@@ -241,6 +246,9 @@ class MHATokenToKVPool(KVCache):
         assert hasattr(self, "v_buffer")
         k_size_bytes = 0
         for k_cache in self.k_buffer:
+            # 计算kvcache的内存大小
+            # np.prod: 计算数组中所有元素的乘积
+            # k_cache.dtype.itemsize: 计算每个元素的大小
             k_size_bytes += np.prod(k_cache.shape) * k_cache.dtype.itemsize
         v_size_bytes = 0
         for v_cache in self.v_buffer:

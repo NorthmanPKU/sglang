@@ -39,6 +39,7 @@ from sglang.utils import get_exception_traceback
 logger = logging.getLogger(__name__)
 
 
+# 实现取的逻辑是把index先设成负值，这样负数就是下标，正数是token，用clamp + where筛选并赋值做完的token
 @torch.compile(dynamic=True, backend=get_compiler_backend())
 def resolve_future_token_ids(input_ids, future_token_ids_map):
     input_ids[:] = torch.where(
@@ -137,6 +138,8 @@ class TpModelWorkerClient:
             resolve_future_token_ids(input_ids, self.future_token_ids_map)
 
             # Run forward
+            # 发射完之后会立刻返回一个future token的下标list和下标map，从这里打破了step之间在cpu上的数据依赖，
+            # cpu不需要知道下一个token是什么就可以发射gpu kernel
             logits_output, next_token_ids = self.worker.forward_batch_generation(
                 model_worker_batch, self.launch_done
             )
@@ -160,7 +163,9 @@ class TpModelWorkerClient:
                 logits_output.hidden_states = logits_output.hidden_states.to(
                     "cpu", non_blocking=True
                 )
+            # 当发射完当前step之后，next token的地址我们就知道了，那么立刻发射一个d2d的copy
             next_token_ids = next_token_ids.to("cpu", non_blocking=True)
+            # 在流中插入一个标记，表示当前流中所有操作已经完成
             copy_done.record()
 
             self.output_queue.put((copy_done, logits_output, next_token_ids))
@@ -195,10 +200,13 @@ class TpModelWorkerClient:
         self.scheduler_stream.synchronize()
 
         # Push a new batch to the queue
-        self.input_queue.put((model_worker_batch, self.future_token_ids_ct))
+        # 这里给了一个future_token_ids_ct是告诉forward线程output token可以从哪块地址开始写入
+        self.input_queue.put((model_worker_batch, self.future_token_ids_ct))        # 异步下发任务
 
         # Allocate output future objects
         bs = len(model_worker_batch.seq_lens)
+        # 下发完任务之后立刻返回了一个future_next_token_ids
+        # 这里的值不是真正的output token，而是output token将要写入的下标
         future_next_token_ids = torch.arange(
             -(self.future_token_ids_ct + 1),
             -(self.future_token_ids_ct + 1 + bs),

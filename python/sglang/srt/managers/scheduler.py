@@ -173,6 +173,7 @@ class Scheduler:
 
         # Init inter-process communication
         context = zmq.Context(2)
+        # 和tokenizerManager，detokenizer manager 建立zmq 连接
         if self.attn_tp_rank == 0:
             self.recv_from_tokenizer = get_zmq_socket(
                 context, zmq.PULL, port_args.scheduler_input_ipc_name, False
@@ -208,11 +209,18 @@ class Scheduler:
             logger.info("Overlap scheduler is disabled for multimodal models.")
 
         # Launch a tensor parallel worker
+        # TpWorker与TpWorkerClient的关系，其实就是同步和异步的差别，sglang中二者互斥，
+        # 不可同时共存。TpWorker 自己没有独立的工作线程，都是接口函数，被scheduler 调用；
+        # TpWorkerClient则内部有一个自己的工作线程forward_thread_func_，
+        # scheduler 通过TpWorkerClient的接口，将任务提交到forward_thread_func_上，
+        # 由该线程自己调度，以实现更好的overlap，如果enable_overlap 为True，则会选择TpWorkerClient模式
         if self.enable_overlap:
             TpWorkerClass = TpModelWorkerClient
         else:
             TpWorkerClass = TpModelWorker
 
+        # 初始化tp_worker，tp worker 之间用nccl 通信（这里tp worker 包含tp和dp 两层rank，所以应该是2维去理解）
+        # 稍微注意一下tp worker的初始化，因为memory_pool 是从tp_worker里拿的。这里会一路调用到model_runner的初始化
         self.tp_worker = TpWorkerClass(
             server_args=server_args,
             gpu_id=gpu_id,
@@ -266,6 +274,7 @@ class Scheduler:
         )
 
         # Init memory pool and cache
+        # kv cache 和 调度队列相关初始化
         self.init_memory_pool_and_cache()
 
         # Init running status
@@ -277,7 +286,7 @@ class Scheduler:
         self.cur_batch: Optional[ScheduleBatch] = None
         # The current forward batch
         self.last_batch: Optional[ScheduleBatch] = None
-        self.forward_ct = 0
+        self.forward_ct = 0 # ct stands for "count"
         self.forward_ct_decode = 0
         self.num_generated_tokens = 0
         self.last_decode_stats_tic = time.time()
@@ -312,6 +321,10 @@ class Scheduler:
         assert (
             server_args.schedule_conservativeness >= 0
         ), "Invalid schedule_conservativeness"
+
+        # 调度过程中会改变调度逻辑的成员
+        # 第一部分是new_token_ratio的参数，这个用来控制解码过程中加入新token的比例，用于提高回复的新颖性。
+        # 第二部分是batch_is_full ，如果当前batch 已经满了，就跳过插入请求的判断。
         self.init_new_token_ratio = min(
             global_config.default_init_new_token_ratio
             * server_args.schedule_conservativeness,
@@ -333,6 +346,7 @@ class Scheduler:
         self.batch_is_full = False
 
         # Init watchdog thread
+        # watchdog 就是判断前后两次forward的时间间隔，大于watchdog timeout就认为僵尸/卡住。
         self.watchdog_timeout = server_args.watchdog_timeout
         t = threading.Thread(target=self.watchdog_thread, daemon=True)
         t.start()
@@ -350,6 +364,7 @@ class Scheduler:
         self.profiler_target_forward_ct: Optional[int] = None
 
         # Init metrics stats
+        # metric 用来上报系统指标。
         self.init_metrics()
 
         # Init request dispatcher
@@ -417,7 +432,7 @@ class Scheduler:
         self.req_to_token_pool, self.token_to_kv_pool_allocator = (
             self.tp_worker.get_memory_pool()
         )
-
+        # SchedulePolicy 的初始化也传入了tree_cache，可见kvcache 管理也是直接影响调度的。由下也可见，默认使用radixCache
         if (
             server_args.chunked_prefill_size is not None
             and server_args.disable_radix_cache
@@ -476,7 +491,11 @@ class Scheduler:
     def event_loop_normal(self):
         """A normal scheduler loop."""
         while True:
+            # 从tokenizermanager 获得新请求（可能是新http请求，也可能是还没推理完需要继续推理的请求，
+            # 也可能是其他类型的请求，比如flushcache，profile，closesession等等
             recv_reqs = self.recv_requests()
+            # 处理进来的请求，主要是处理generation的请求，大部份类型的请求不需要进推理，
+            # 所以走完这个函数也就完了，对于generation（也包括embedding）请求，则会构建Req class，插入到waiting_queue里
             self.process_input_requests(recv_reqs)
 
             batch = self.get_next_batch_to_run()
@@ -487,6 +506,7 @@ class Scheduler:
                 self.process_batch_result(batch, result)
             else:
                 # When the server is idle, so self-check and re-init some states
+                # 如果当前没有batch，则检查内存，并重新初始化一些状态
                 self.check_memory()
                 self.new_token_ratio = self.init_new_token_ratio
 
@@ -534,6 +554,27 @@ class Scheduler:
 
     def recv_requests(self) -> List[Req]:
         """Receive results at tp_rank = 0 and broadcast it to all other TP ranks."""
+        """
+        从tokenizer接收请求并将其分发给所有张量并行(tensor parallel)等级的进程。
+        
+        此函数处理从tokenizer进程接收传入请求，并在分布式环境中将其分发到多个GPU。
+        只有注意力张量并行等级(attention tensor parallel rank)为0的进程实际接收请求；
+        然后这些请求会广播到其他等级的进程。
+        
+        当启用数据并行注意力(data parallel attention)时，请求被分为两类：
+        1. 工作请求(TokenizedGenerateReqInput, TokenizedEmbeddingReqInput)：需要模型计算的请求
+        2. 控制请求(其他类型)：用于系统管理操作的请求
+        
+        每种类别使用相应的进程组进行广播，以确保资源高效利用。
+        
+        返回：
+            List[Req]: 当前等级需要处理的请求对象列表。
+                    在标准张量并行模式下，所有等级接收相同的列表。
+                    在数据并行注意力模式下，不同等级可能基于其在并行拓扑中的位置接收不同的请求子集。
+        
+        注意：
+            此函数使用非阻塞ZMQ通信接收所有可用请求而不等待，从而提高批处理效率。
+        """
         if self.attn_tp_rank == 0:
             recv_reqs = []
 
@@ -566,6 +607,7 @@ class Scheduler:
                 work_reqs = None
                 control_reqs = None
 
+            # work_reqs 发给attention 进程
             if self.attn_tp_size != 1:
                 attn_tp_rank_0 = self.dp_rank * self.attn_tp_size
                 work_reqs = broadcast_pyobj(
@@ -600,6 +642,34 @@ class Scheduler:
         self,
         recv_req: TokenizedGenerateReqInput,
     ):
+        """
+        处理文本生成请求，验证参数并将请求添加到处理队列。
+        
+        此函数将外部接收的生成请求转换为系统内部格式，执行参数验证、会话管理、
+        多模态处理和语法约束设置等一系列操作。根据请求的有效性和特性，将其路由
+        到适当的处理队列，或者在发现问题时将其标记为中止。
+        
+        参数:
+            recv_req (TokenizedGenerateReqInput): 已经过tokenizer处理的生成请求对象，
+                                                包含输入文本、采样参数、会话信息等。
+        
+        流程:
+            1. 检查会话信息，决定创建新请求或基于现有会话创建请求
+            2. 处理多模态输入（如图像+文本）
+            3. 验证输入长度是否在允许范围内
+            4. 设置概率日志记录的起始位置
+            5. 计算并限制最大输出token数
+            6. 处理语法约束（JSON模式、正则表达式等）
+            7. 将请求路由到语法编译队列或常规处理队列
+        
+        错误处理:
+            - 无效会话ID: 请求被标记为中止并返回错误
+            - 输入过长: 根据配置截断或中止请求
+            - 无效参数: 修正参数或中止请求并返回错误
+        
+        返回:
+            None: 函数不直接返回值，而是通过将请求添加到队列继续处理
+        """
         # Create a new request
         if (
             recv_req.session_params is None
@@ -946,7 +1016,10 @@ class Scheduler:
             self.metrics_collector.log_stats(self.stats)
 
     def get_next_batch_to_run(self) -> Optional[ScheduleBatch]:
+        # 判断下一个batch 做什么
         # Merge the prefill batch into the running batch
+        # 这里的意思是合并batch，首先将chunked 请求从当前batch 里拿掉，释放相关资源
+        # 然后将last_batch 的请求合并到当前running的请求中
         if self.last_batch and self.last_batch.forward_mode.is_extend():
             if self.chunked_req:
                 # Move the chunked request out of the batch so that we can merge
@@ -974,12 +1047,14 @@ class Scheduler:
         new_batch = self.get_new_batch_prefill()
         if new_batch is not None:
             # Run prefill first if possible
+            # 如果有prefill的batch 请求，则优先处理prefill，chunked request 在这里会重新获得相关资源
             ret = new_batch
         else:
             # Run decode
             if self.running_batch is None:
                 ret = None
             else:
+                # 剩下是decode 的请求，需要进行一些更新
                 self.running_batch = self.update_running_batch(self.running_batch)
                 ret = self.running_batch
 
@@ -995,20 +1070,24 @@ class Scheduler:
             self.move_ready_grammar_requests()
 
         # Handle the cases where prefill is not allowed
+        # 如果batch 已经满了，或者没有新的waiting 请求，也没有chunked prefill请求
+        # 特别提出来chunked请求，应该是和前面单独从running batch里摘出去了有关，这边要找补回来
         if (
             self.batch_is_full or len(self.waiting_queue) == 0
         ) and self.chunked_req is None:
             return None
 
+        # 如果当running batch的size，达到了max_running_requests，说明满了，无法插入
         running_bs = len(self.running_batch.reqs) if self.running_batch else 0
         if running_bs >= self.max_running_requests:
             self.batch_is_full = True
             return None
 
-        # Get priority queue
+        # Get priority queue，具体逻辑请回头看schedule_policy的部分，总之就是根据policy，
+        # 对waiting_queue 进行排序，把队列里优先级高的请求排在前面
         prefix_computed = self.policy.calc_priority(self.waiting_queue)
 
-        # Prefill policy
+        # Prefill policy，构建一个PrefillAdder类进行插入处理，具体逻辑和接口函数上面有写
         adder = PrefillAdder(
             self.tree_cache,
             self.token_to_kv_pool_allocator,
@@ -1031,6 +1110,7 @@ class Scheduler:
                 else set([])
             )
         # Get requests from the waiting queue to a new prefill batch
+        # 从新请求的waiting 队列里拿出来，构建请求，如果发现已满，则跳出循环
         for req in self.waiting_queue:
             if (
                 self.lora_paths
@@ -1087,9 +1167,13 @@ class Scheduler:
                 break
 
         # Update waiting queue
+        # 如果can_run_list 里为空，也就是因为某些原因，add_one_req 没有返回AddReqResult.CONTINUE的情况
+        # 返回None，说明没有新prefill 请求
+        # 那前面说的chunked 请求呢？已经调用过add_chunked_req，如果成功也会在can_run_list里
         can_run_list: List[Req] = adder.can_run_list
         if len(can_run_list) == 0:
             return None
+        # waiting queue重组，不在can run list 里扔进去
         self.waiting_queue = [
             x for x in self.waiting_queue if x not in set(can_run_list)
         ]
@@ -1106,6 +1190,8 @@ class Scheduler:
             self.log_prefill_stats(adder, can_run_list, running_bs)
 
         # Create a new batch
+        # 构建一个ScheduleBatch，所以prefill 会拥有一个新batch
+        # 合理，因为prefill是新请求触发的，请求触发batch 合理
         new_batch = ScheduleBatch.init_new(
             can_run_list,
             self.req_to_token_pool,
@@ -1116,6 +1202,7 @@ class Scheduler:
             self.spec_algorithm,
             self.server_args.enable_custom_logit_processor,
         )
+        # 然后为各种forward mode的schedulebatch prepare一下即可
         new_batch.prepare_for_extend()
 
         # Mixed-style chunked prefill
@@ -1140,6 +1227,7 @@ class Scheduler:
         """Update the current running decoding batch."""
         initial_bs = batch.batch_size()
 
+        # 这里的filter 逻辑上其实是再过滤一遍，去掉已经结束的请求，以及prefill的请求
         batch.filter_batch()
         if batch.is_empty():
             self.batch_is_full = False
@@ -1149,6 +1237,8 @@ class Scheduler:
         if not batch.check_decode_mem(self.decode_mem_cache_buf_multiplier) or (
             TEST_RETRACT and batch.batch_size() > 10
         ):
+            # 如果oom，撤回当前的decode batch，塞到waiting 队列中
+            # 重新设置new_token_ratio
             old_ratio = self.new_token_ratio
 
             retracted_reqs, new_token_ratio = batch.retract_decode(self.server_args)
@@ -1161,15 +1251,17 @@ class Scheduler:
             )
             self._extend_requests_to_queue(retracted_reqs)
         else:
+            # 每次decode 都会减小新token生成概率
             self.new_token_ratio = max(
                 self.new_token_ratio - self.new_token_ratio_decay,
                 self.min_new_token_ratio,
             )
-
+        # 再次判断有没有满batch
         if batch.batch_size() < initial_bs:
             self.batch_is_full = False
 
         # Update batch tensors
+        # 为请求分配具体的kv cache，即分配token_to_kv_pool 里的值
         batch.prepare_for_decode()
         return batch
 
@@ -1177,6 +1269,7 @@ class Scheduler:
         self, batch: ScheduleBatch
     ) -> Union[GenerationBatchResult, EmbeddingBatchResult]:
         """Run a batch."""
+        # 这个其实就是计数，watchdog 会观察计数变更的间隔，超过阈值，就会报僵尸或者hung住的告警
         self.forward_ct += 1
 
         # Check profiler
@@ -1189,6 +1282,8 @@ class Scheduler:
         # Run forward
         if self.is_generation:
             if self.spec_algorithm.is_none():
+                # 非投机推理，也就是自回归解码的模式
+                # 几乎就是一个赋值过程，转成了workerBatch的结构
                 model_worker_batch = batch.get_model_worker_batch()
                 logits_output, next_token_ids = self.tp_worker.forward_batch_generation(
                     model_worker_batch
@@ -1209,7 +1304,7 @@ class Scheduler:
             batch.output_ids = next_token_ids
 
             # These 2 values are needed for processing the output, but the values can be
-            # modified by overlap schedule. So we have to copy them here so that
+            # modified by overlapping schedule. So we have to copy them here so that
             # we can use the correct values in output processing.
             if batch.return_logprob:
                 extend_input_len_per_req = [req.extend_input_len for req in batch.reqs]

@@ -14,8 +14,8 @@ if TYPE_CHECKING:
 
 class ChunkCacheEntry:
     def __init__(self, rid: str, value: torch.Tensor):
-        self.rid = rid
-        self.value = value
+        self.rid = rid # request id
+        self.value = value # token indice的数组
 
 
 class ChunkCache(BasePrefixCache):
@@ -28,13 +28,13 @@ class ChunkCache(BasePrefixCache):
         self.req_to_token_pool = req_to_token_pool
         self.token_to_kv_pool_allocator = token_to_kv_pool_allocator
         self.entries: Dict[str, ChunkCacheEntry] = {}
-
         self.reset()
 
     def reset(self):
         self.entries = {}
 
-    def match_prefix(self, rid: int, key: List[int]) -> Tuple[List[int], int]:
+    def match_prefix(self, rid: int, key: List[int]) -> Tuple[List[int], int]: # 前缀匹配
+        # Why rid is int?
         if rid not in self.entries:
             return [], None
 
@@ -42,7 +42,7 @@ class ChunkCache(BasePrefixCache):
         max_prefix_len = len(key)
         return entry.value[:max_prefix_len], entry
 
-    def cache_finished_req(self, req: Req, token_ids: Optional[List[int]] = None):
+    def cache_finished_req(self, req: Req, token_ids: Optional[List[int]] = None): # 从cache中清除相关信息
         if token_ids is None:
             token_id_len = len(req.origin_input_ids) + len(req.output_ids) - 1
         else:
@@ -57,7 +57,7 @@ class ChunkCache(BasePrefixCache):
         if req.rid in self.entries:
             del self.entries[req.rid]
 
-    def cache_unfinished_req(self, req: Req):
+    def cache_unfinished_req(self, req: Req): # cache数据到cache entry中
         token_id_len = len(req.fill_ids)
 
         kv_indices = self.req_to_token_pool.req_to_token[

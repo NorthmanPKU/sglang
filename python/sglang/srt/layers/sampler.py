@@ -27,6 +27,21 @@ SYNC_TOKEN_IDS_ACROSS_TP = get_bool_env_var("SYNC_TOKEN_IDS_ACROSS_TP")
 
 
 class Sampler(nn.Module):
+    """
+    Sampler 类负责在语言模型中处理采样过程，根据模型输出的logits选择下一个要生成的token。
+
+    属性:
+        use_nan_detection (bool): 是否启用logits中的NaN检测。
+        tp_sync_group (torch.distributed.ProcessGroup): 张量并行同步组。
+
+    方法:
+        forward(logits_output, sampling_info, return_logprob, top_logprobs_nums, token_ids_logprobs):
+            执行采样过程，应用自定义logit处理器，处理NaN，并使用指定的采样策略选择下一个token。
+            可选地返回log概率。
+
+        _apply_custom_logit_processor(logits, sampling_batch_info):
+            根据提供的采样批次信息，应用自定义logit处理器以原地修改logits。
+    """
     def __init__(self):
         super().__init__()
         self.use_nan_detection = global_server_args_dict["enable_nan_detection"]
