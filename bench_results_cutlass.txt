@@ -1,0 +1,262 @@
+====================================================================================================
+[组合] SERVER=flashinfer  CLIENT=rand256x32
+====================================================================================================
+[SERVER] 启动 flashinfer: SGLANG_ENABLE_FLASHINFER_GEMM=1 python3 -m sglang.launch_server --model-path /dev/shm/DeepSeek-V3-0324/ --tp 8 --trust-remote --attention-backend flashinfer --disable-radix
+[SERVER] flashinfer 就绪检测到：The server is fired up and ready to roll!
+[CLIENT] 运行 rand256x32: python3 -m sglang.bench_serving --backend sglang-oai --dataset-name random --random-input-len 1000 --random-output-len 1000 --random-range-ratio 1 --num-prompts 256 --max-concurrency 32
+
+
+################################################################################
+SERVER: flashinfer
+CLIENT: rand256x32
+COMMAND: python3 -m sglang.bench_serving --backend sglang-oai --dataset-name random --random-input-len 1000 --random-output-len 1000 --random-range-ratio 1 --num-prompts 256 --max-concurrency 32
+################################################################################
+benchmark_args=Namespace(backend='sglang-oai', base_url=None, host='0.0.0.0', port=None, dataset_name='random', dataset_path='', model=None, tokenizer=None, num_prompts=256, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1000, random_output_len=1000, random_range_ratio=1.0, request_rate=inf, max_concurrency=32, output_file=None, output_details=False, disable_tqdm=False, disable_stream=False, return_logprob=False, seed=1, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, lora_name=None, prompt_suffix='', pd_separated=False, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=64, gsp_prompts_per_group=16, gsp_system_prompt_len=2048, gsp_question_len=128, gsp_output_len=256)
+Namespace(backend='sglang-oai', base_url=None, host='0.0.0.0', port=30000, dataset_name='random', dataset_path='', model='/dev/shm/DeepSeek-V3-0324/', tokenizer=None, num_prompts=256, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1000, random_output_len=1000, random_range_ratio=1.0, request_rate=inf, max_concurrency=32, output_file=None, output_details=False, disable_tqdm=False, disable_stream=False, return_logprob=False, seed=1, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, lora_name=None, prompt_suffix='', pd_separated=False, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=64, gsp_prompts_per_group=16, gsp_system_prompt_len=2048, gsp_question_len=128, gsp_output_len=256)
+
+#Input tokens: 256000
+#Output tokens: 256000
+Starting warmup with 1 sequences...
+Warmup completed with 1 sequences. Starting main benchmark run...
+
+============ Serving Benchmark Result ============
+Backend:                                 sglang-oai
+Traffic request rate:                    inf
+Max request concurrency:                 32
+Successful requests:                     256
+Benchmark duration (s):                  255.25
+Total input tokens:                      256000
+Total generated tokens:                  256000
+Total generated tokens (retokenized):    254763
+Request throughput (req/s):              1.00
+Input token throughput (tok/s):          1002.94
+Output token throughput (tok/s):         1002.94
+Total token throughput (tok/s):          2005.88
+Concurrency:                             31.98
+----------------End-to-End Latency----------------
+Mean E2E Latency (ms):                   31889.68
+Median E2E Latency (ms):                 31526.58
+---------------Time to First Token----------------
+Mean TTFT (ms):                          1203.21
+Median TTFT (ms):                        1161.10
+P99 TTFT (ms):                           3433.49
+---------------Inter-Token Latency----------------
+Mean ITL (ms):                           30.87
+Median ITL (ms):                         30.38
+P95 ITL (ms):                            31.71
+P99 ITL (ms):                            32.20
+Max ITL (ms):                            2973.21
+==================================================
+
+[STDERR]
+
+  0%|          | 0/256 [00:00<?, ?it/s]
+  0%|          | 1/256 [00:34<2:28:11, 34.87s/it]
+ 13%|█▎        | 33/256 [01:06<06:22,  1.71s/it]
+ 25%|██▌       | 65/256 [01:37<04:05,  1.29s/it]
+ 38%|███▊      | 97/256 [02:09<03:03,  1.15s/it]
+ 50%|█████     | 129/256 [02:41<02:18,  1.09s/it]
+ 63%|██████▎   | 161/256 [03:12<01:39,  1.05s/it]
+ 75%|███████▌  | 193/256 [03:42<01:03,  1.02s/it]
+ 88%|████████▊ | 225/256 [04:15<00:31,  1.01s/it]
+100%|██████████| 256/256 [04:15<00:00,  1.00it/s]
+[CLIENT] rand256x32 完成，退出码 0
+[SERVER] 关闭 flashinfer
+[SERVER] flashinfer 已优雅退出
+====================================================================================================
+[组合] SERVER=flashinfer  CLIENT=rand128x16
+====================================================================================================
+[SERVER] 启动 flashinfer: SGLANG_ENABLE_FLASHINFER_GEMM=1 python3 -m sglang.launch_server --model-path /dev/shm/DeepSeek-V3-0324/ --tp 8 --trust-remote --attention-backend flashinfer --disable-radix
+[SERVER] flashinfer 就绪检测到：The server is fired up and ready to roll!
+[CLIENT] 运行 rand128x16: python3 -m sglang.bench_serving --backend sglang-oai --dataset-name random --random-input-len 1000 --random-output-len 1000 --random-range-ratio 1 --num-prompts 128 --max-concurrency 16
+
+
+################################################################################
+SERVER: flashinfer
+CLIENT: rand128x16
+COMMAND: python3 -m sglang.bench_serving --backend sglang-oai --dataset-name random --random-input-len 1000 --random-output-len 1000 --random-range-ratio 1 --num-prompts 128 --max-concurrency 16
+################################################################################
+benchmark_args=Namespace(backend='sglang-oai', base_url=None, host='0.0.0.0', port=None, dataset_name='random', dataset_path='', model=None, tokenizer=None, num_prompts=128, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1000, random_output_len=1000, random_range_ratio=1.0, request_rate=inf, max_concurrency=16, output_file=None, output_details=False, disable_tqdm=False, disable_stream=False, return_logprob=False, seed=1, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, lora_name=None, prompt_suffix='', pd_separated=False, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=64, gsp_prompts_per_group=16, gsp_system_prompt_len=2048, gsp_question_len=128, gsp_output_len=256)
+Namespace(backend='sglang-oai', base_url=None, host='0.0.0.0', port=30000, dataset_name='random', dataset_path='', model='/dev/shm/DeepSeek-V3-0324/', tokenizer=None, num_prompts=128, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1000, random_output_len=1000, random_range_ratio=1.0, request_rate=inf, max_concurrency=16, output_file=None, output_details=False, disable_tqdm=False, disable_stream=False, return_logprob=False, seed=1, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, lora_name=None, prompt_suffix='', pd_separated=False, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=64, gsp_prompts_per_group=16, gsp_system_prompt_len=2048, gsp_question_len=128, gsp_output_len=256)
+
+#Input tokens: 128000
+#Output tokens: 128000
+Starting warmup with 1 sequences...
+Warmup completed with 1 sequences. Starting main benchmark run...
+
+============ Serving Benchmark Result ============
+Backend:                                 sglang-oai
+Traffic request rate:                    inf
+Max request concurrency:                 16
+Successful requests:                     128
+Benchmark duration (s):                  201.37
+Total input tokens:                      128000
+Total generated tokens:                  128000
+Total generated tokens (retokenized):    127260
+Request throughput (req/s):              0.64
+Input token throughput (tok/s):          635.64
+Output token throughput (tok/s):         635.64
+Total token throughput (tok/s):          1271.29
+Concurrency:                             15.99
+----------------End-to-End Latency----------------
+Mean E2E Latency (ms):                   25161.28
+Median E2E Latency (ms):                 24880.44
+---------------Time to First Token----------------
+Mean TTFT (ms):                          886.12
+Median TTFT (ms):                        645.52
+P99 TTFT (ms):                           2924.31
+---------------Inter-Token Latency----------------
+Mean ITL (ms):                           24.43
+Median ITL (ms):                         24.26
+P95 ITL (ms):                            24.66
+P99 ITL (ms):                            25.39
+Max ITL (ms):                            2477.03
+==================================================
+
+[STDERR]
+
+  0%|          | 0/128 [00:00<?, ?it/s]
+  1%|          | 1/128 [00:27<57:41, 27.26s/it]
+ 13%|█▎        | 17/128 [00:52<04:52,  2.63s/it]
+ 26%|██▌       | 33/128 [01:16<03:10,  2.01s/it]
+ 38%|███▊      | 49/128 [01:41<02:22,  1.80s/it]
+ 51%|█████     | 65/128 [02:06<01:47,  1.71s/it]
+ 63%|██████▎   | 81/128 [02:31<01:17,  1.65s/it]
+ 76%|███████▌  | 97/128 [02:56<00:50,  1.62s/it]
+ 88%|████████▊ | 113/128 [03:21<00:23,  1.60s/it]
+100%|██████████| 128/128 [03:21<00:00,  1.57s/it]
+[CLIENT] rand128x16 完成，退出码 0
+[SERVER] 关闭 flashinfer
+[SERVER] flashinfer 已优雅退出
+====================================================================================================
+[组合] SERVER=triton  CLIENT=rand256x32
+====================================================================================================
+[SERVER] 启动 triton: SGLANG_ENABLE_FLASHINFER_GEMM=1 python3 -m sglang.launch_server --model-path /dev/shm/DeepSeek-V3-0324/ --tp 8 --trust-remote --attention-backend triton
+[SERVER] triton 就绪检测到：The server is fired up and ready to roll!
+[CLIENT] 运行 rand256x32: python3 -m sglang.bench_serving --backend sglang-oai --dataset-name random --random-input-len 1000 --random-output-len 1000 --random-range-ratio 1 --num-prompts 256 --max-concurrency 32
+
+
+################################################################################
+SERVER: triton
+CLIENT: rand256x32
+COMMAND: python3 -m sglang.bench_serving --backend sglang-oai --dataset-name random --random-input-len 1000 --random-output-len 1000 --random-range-ratio 1 --num-prompts 256 --max-concurrency 32
+################################################################################
+benchmark_args=Namespace(backend='sglang-oai', base_url=None, host='0.0.0.0', port=None, dataset_name='random', dataset_path='', model=None, tokenizer=None, num_prompts=256, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1000, random_output_len=1000, random_range_ratio=1.0, request_rate=inf, max_concurrency=32, output_file=None, output_details=False, disable_tqdm=False, disable_stream=False, return_logprob=False, seed=1, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, lora_name=None, prompt_suffix='', pd_separated=False, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=64, gsp_prompts_per_group=16, gsp_system_prompt_len=2048, gsp_question_len=128, gsp_output_len=256)
+Namespace(backend='sglang-oai', base_url=None, host='0.0.0.0', port=30000, dataset_name='random', dataset_path='', model='/dev/shm/DeepSeek-V3-0324/', tokenizer=None, num_prompts=256, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1000, random_output_len=1000, random_range_ratio=1.0, request_rate=inf, max_concurrency=32, output_file=None, output_details=False, disable_tqdm=False, disable_stream=False, return_logprob=False, seed=1, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, lora_name=None, prompt_suffix='', pd_separated=False, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=64, gsp_prompts_per_group=16, gsp_system_prompt_len=2048, gsp_question_len=128, gsp_output_len=256)
+
+#Input tokens: 256000
+#Output tokens: 256000
+Starting warmup with 1 sequences...
+Warmup completed with 1 sequences. Starting main benchmark run...
+
+============ Serving Benchmark Result ============
+Backend:                                 sglang-oai
+Traffic request rate:                    inf
+Max request concurrency:                 32
+Successful requests:                     256
+Benchmark duration (s):                  279.65
+Total input tokens:                      256000
+Total generated tokens:                  256000
+Total generated tokens (retokenized):    254607
+Request throughput (req/s):              0.92
+Input token throughput (tok/s):          915.43
+Output token throughput (tok/s):         915.43
+Total token throughput (tok/s):          1830.85
+Concurrency:                             31.99
+----------------End-to-End Latency----------------
+Mean E2E Latency (ms):                   34940.18
+Median E2E Latency (ms):                 34541.76
+---------------Time to First Token----------------
+Mean TTFT (ms):                          1612.58
+Median TTFT (ms):                        1522.83
+P99 TTFT (ms):                           4703.18
+---------------Inter-Token Latency----------------
+Mean ITL (ms):                           33.53
+Median ITL (ms):                         33.07
+P95 ITL (ms):                            34.67
+P99 ITL (ms):                            35.33
+Max ITL (ms):                            4193.31
+==================================================
+
+[STDERR]
+
+  0%|          | 0/256 [00:00<?, ?it/s]
+  0%|          | 1/256 [00:38<2:42:49, 38.31s/it]
+ 13%|█▎        | 33/256 [01:12<06:58,  1.88s/it]
+ 25%|██▌       | 65/256 [01:47<04:28,  1.41s/it]
+ 38%|███▊      | 97/256 [02:22<03:21,  1.27s/it]
+ 50%|█████     | 129/256 [02:56<02:31,  1.19s/it]
+ 63%|██████▎   | 161/256 [03:30<01:49,  1.15s/it]
+ 75%|███████▌  | 193/256 [04:04<01:10,  1.11s/it]
+ 88%|████████▊ | 225/256 [04:39<00:34,  1.11s/it]
+100%|██████████| 256/256 [04:39<00:00,  1.09s/it]
+[CLIENT] rand256x32 完成，退出码 0
+[SERVER] 关闭 triton
+[SERVER] triton 已优雅退出
+====================================================================================================
+[组合] SERVER=triton  CLIENT=rand128x16
+====================================================================================================
+[SERVER] 启动 triton: SGLANG_ENABLE_FLASHINFER_GEMM=1 python3 -m sglang.launch_server --model-path /dev/shm/DeepSeek-V3-0324/ --tp 8 --trust-remote --attention-backend triton
+[SERVER] triton 就绪检测到：The server is fired up and ready to roll!
+[CLIENT] 运行 rand128x16: python3 -m sglang.bench_serving --backend sglang-oai --dataset-name random --random-input-len 1000 --random-output-len 1000 --random-range-ratio 1 --num-prompts 128 --max-concurrency 16
+
+
+################################################################################
+SERVER: triton
+CLIENT: rand128x16
+COMMAND: python3 -m sglang.bench_serving --backend sglang-oai --dataset-name random --random-input-len 1000 --random-output-len 1000 --random-range-ratio 1 --num-prompts 128 --max-concurrency 16
+################################################################################
+benchmark_args=Namespace(backend='sglang-oai', base_url=None, host='0.0.0.0', port=None, dataset_name='random', dataset_path='', model=None, tokenizer=None, num_prompts=128, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1000, random_output_len=1000, random_range_ratio=1.0, request_rate=inf, max_concurrency=16, output_file=None, output_details=False, disable_tqdm=False, disable_stream=False, return_logprob=False, seed=1, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, lora_name=None, prompt_suffix='', pd_separated=False, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=64, gsp_prompts_per_group=16, gsp_system_prompt_len=2048, gsp_question_len=128, gsp_output_len=256)
+Namespace(backend='sglang-oai', base_url=None, host='0.0.0.0', port=30000, dataset_name='random', dataset_path='', model='/dev/shm/DeepSeek-V3-0324/', tokenizer=None, num_prompts=128, sharegpt_output_len=None, sharegpt_context_len=None, random_input_len=1000, random_output_len=1000, random_range_ratio=1.0, request_rate=inf, max_concurrency=16, output_file=None, output_details=False, disable_tqdm=False, disable_stream=False, return_logprob=False, seed=1, disable_ignore_eos=False, extra_request_body=None, apply_chat_template=False, profile=False, lora_name=None, prompt_suffix='', pd_separated=False, flush_cache=False, warmup_requests=1, tokenize_prompt=False, gsp_num_groups=64, gsp_prompts_per_group=16, gsp_system_prompt_len=2048, gsp_question_len=128, gsp_output_len=256)
+
+#Input tokens: 128000
+#Output tokens: 128000
+Starting warmup with 1 sequences...
+Warmup completed with 1 sequences. Starting main benchmark run...
+
+============ Serving Benchmark Result ============
+Backend:                                 sglang-oai
+Traffic request rate:                    inf
+Max request concurrency:                 16
+Successful requests:                     128
+Benchmark duration (s):                  219.18
+Total input tokens:                      128000
+Total generated tokens:                  128000
+Total generated tokens (retokenized):    127423
+Request throughput (req/s):              0.58
+Input token throughput (tok/s):          583.99
+Output token throughput (tok/s):         583.99
+Total token throughput (tok/s):          1167.97
+Concurrency:                             15.99
+----------------End-to-End Latency----------------
+Mean E2E Latency (ms):                   27386.98
+Median E2E Latency (ms):                 27030.88
+---------------Time to First Token----------------
+Mean TTFT (ms):                          1119.91
+Median TTFT (ms):                        872.13
+P99 TTFT (ms):                           3504.57
+---------------Inter-Token Latency----------------
+Mean ITL (ms):                           26.41
+Median ITL (ms):                         26.21
+P95 ITL (ms):                            27.16
+P99 ITL (ms):                            27.63
+Max ITL (ms):                            3198.93
+==================================================
+
+[STDERR]
+
+  0%|          | 0/128 [00:00<?, ?it/s]
+  1%|          | 1/128 [00:29<1:03:27, 29.98s/it]
+ 13%|█▎        | 17/128 [00:56<05:18,  2.87s/it]
+ 26%|██▌       | 33/128 [01:23<03:27,  2.19s/it]
+ 38%|███▊      | 49/128 [01:50<02:34,  1.96s/it]
+ 51%|█████     | 65/128 [02:17<01:56,  1.85s/it]
+ 63%|██████▎   | 81/128 [02:44<01:24,  1.79s/it]
+ 76%|███████▌  | 97/128 [03:12<00:54,  1.76s/it]
+ 88%|████████▊ | 113/128 [03:39<00:26,  1.74s/it]
+100%|██████████| 128/128 [03:39<00:00,  1.71s/it]
+[CLIENT] rand128x16 完成，退出码 0
+[SERVER] 关闭 triton
+[SERVER] triton 已优雅退出
+
+所有组合测试完成！结果保存在：/sgl-workspace/sglang/bench_results.txt

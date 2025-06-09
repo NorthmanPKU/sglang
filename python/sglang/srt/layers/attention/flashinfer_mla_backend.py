@@ -112,6 +112,7 @@ class FlashInferMLAAttnBackend(AttentionBackend):
         fmha_backend = "auto"
         if is_sm100_supported():
             fmha_backend = "cutlass"
+        print(f"FlashInferMLAAttnBackend init with fmha_backend: {fmha_backend}")
         self.prefill_wrapper_ragged = BatchPrefillWithRaggedKVCacheWrapper(
             self.workspace_buffer, "NHD", backend=fmha_backend
         )
